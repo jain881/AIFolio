@@ -197,7 +197,6 @@ ${cvText}
     try {
         const jsonText = raw.slice(firstBrace, lastBrace + 1);
         const parsed = JSON.parse(jsonText);
-        console.log("text",jsonText,parsed);
         return { success: true, parsed, raw };
     } catch (err) {
         return { success: false, error: "Invalid JSON", raw };
