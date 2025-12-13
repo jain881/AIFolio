@@ -19,9 +19,8 @@ app.use(cors());
 app.use(express.json({ limit: "5mb" }));
 
 const ROOT = process.cwd();
-const BUILD_DIR = path.join(process.cwd(), "react-build");
-const PORTFOLIOS_DIR = path.join(process.cwd(), "portfolios");
-
+const FRONTEND_URL = process.env.FRONTEND_URL || "https://ai-folio-frontend.vercel.app";
+const PORTFOLIOS_DIR = path.join(ROOT, "portfolios");
 /* ------------------- PDF TEXT EXTRACTION ------------------- */
 
 async function extractPDF(filePath) {
@@ -321,13 +320,17 @@ app.post("/deploy-portfolio", async (req, res) => {
     const id = crypto.randomBytes(6).toString("hex");
     const targetDir = path.join(PORTFOLIOS_DIR, `portfolio_${id}`);
 
-    // 2️⃣ Copy FULL React build
-    await fsExtra.copy(BUILD_DIR, targetDir);
+    // 2️⃣ Create portfolio directory
+    await fsExtra.ensureDir(targetDir);
 
-    // 3️⃣ Inject data into index.html
-    const indexPath = path.join(targetDir, "index.html");
-    let html = await fs.readFile(indexPath, "utf8");
+    // 3️⃣ Fetch index.html from frontend URL
+    const response = await fetch(`${FRONTEND_URL}/index.html`);
+    if (!response.ok) {
+      throw new Error(`Failed to fetch index.html: ${response.status}`);
+    }
+    let html = await response.text();
 
+    // 4️⃣ Inject data into index.html
     const injectedScript = `
       <script>
         window.__PORTFOLIO_DATA__ = ${JSON.stringify(data)};
@@ -336,9 +339,9 @@ app.post("/deploy-portfolio", async (req, res) => {
     `;
 
     html = html.replace("</head>", `${injectedScript}</head>`);
-    await fs.writeFile(indexPath, html);
+    await fs.writeFile(path.join(targetDir, "index.html"), html);
 
-    // 4️⃣ Public URL
+    // 5️⃣ Public URL
     const publicUrl = `${req.protocol}://${req.get("host")}/p/${id}`;
 
     res.json({ success: true, deployUrl: publicUrl });
@@ -348,23 +351,33 @@ app.post("/deploy-portfolio", async (req, res) => {
   }
 });
 
-
 /* --------------------------------------------------
    SERVE DEPLOYED PORTFOLIOS
 --------------------------------------------------- */
-app.use("/p/:id", (req, res) => {
+app.use("/p/:id", (req, res, next) => {
   const dir = path.join(PORTFOLIOS_DIR, `portfolio_${req.params.id}`);
-  const filePath = path.join(dir, req.path);
+  const indexFile = path.join(dir, "index.html");
 
-  // If file exists (JS, CSS, images), serve it
-  if (fsExtra.existsSync(filePath)) {
-    return res.sendFile(filePath);
+  // Proxy static assets from frontend URL
+  if (req.path.match(/\.(js|css|png|jpg|jpeg|gif|svg|ico|woff|woff2)$/)) {
+    const assetUrl = `${FRONTEND_URL}${req.path}`;
+    fetch(assetUrl)
+      .then(assetRes => {
+        if (assetRes.ok) {
+          res.set('Content-Type', assetRes.headers.get('content-type'));
+          assetRes.body.pipe(res);
+        } else {
+          res.status(404).send('Asset not found');
+        }
+      })
+      .catch(() => res.status(404).send('Asset not found'));
+  } else {
+    // Serve index.html for all other routes
+    res.sendFile(indexFile, (err) => {
+      if (err) res.status(404).send('Portfolio not found');
+    });
   }
-
-  // Otherwise fallback to index.html (SPA)
-  return res.sendFile(path.join(dir, "index.html"));
 });
-
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
