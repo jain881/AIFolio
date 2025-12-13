@@ -19,7 +19,7 @@ app.use(cors());
 app.use(express.json({ limit: "5mb" }));
 
 const ROOT = process.cwd();
-const FRONTEND_URL = process.env.FRONTEND_URL || "https://ai-folio-frontend.vercel.app";
+const FRONTEND_URL = process.env.FRONTEND_URL || "https://aifolio-frontend.onrender.com";
 const PORTFOLIOS_DIR = path.join(ROOT, "portfolios");
 /* ------------------- PDF TEXT EXTRACTION ------------------- */
 
