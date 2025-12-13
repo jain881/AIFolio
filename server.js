@@ -10,7 +10,6 @@ import fsExtra from "fs-extra";
 import express from "express";
 import multer from "multer";
 
-
 /* ------------------- BASIC SETUP ------------------- */
 
 const app = express();
@@ -19,7 +18,8 @@ app.use(cors());
 app.use(express.json({ limit: "5mb" }));
 
 const ROOT = process.cwd();
-const FRONTEND_URL = process.env.FRONTEND_URL || "https://aifolio-frontend.onrender.com";
+const FRONTEND_URL =
+  process.env.FRONTEND_URL || "https://aifolio-frontend.onrender.com";
 const PORTFOLIOS_DIR = path.join(ROOT, "portfolios");
 /* ------------------- PDF TEXT EXTRACTION ------------------- */
 
@@ -29,7 +29,7 @@ async function extractPDF(filePath) {
   for (let i = 1; i <= pdf.numPages; i++) {
     const page = await pdf.getPage(i);
     const content = await page.getTextContent();
-    const pageText = content.items.map(item => item.str).join(" ");
+    const pageText = content.items.map((item) => item.str).join(" ");
     fullText += pageText + "\n";
   }
   return fullText;
@@ -41,7 +41,8 @@ async function extractTextFromFile(filePath, originalName) {
   const ext = path.extname(originalName).toLowerCase();
 
   if (ext === ".pdf") return await extractPDF(filePath);
-  if (ext === ".docx") return (await mammoth.extractRawText({ path: filePath })).value;
+  if (ext === ".docx")
+    return (await mammoth.extractRawText({ path: filePath })).value;
   if (ext === ".txt") return await fs.readFile(filePath, "utf8");
 
   return "";
@@ -70,7 +71,7 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 async function parseCVWithGemini(cvText) {
   const model = genAI.getGenerativeModel({
-    model: "models/gemini-2.5-flash"
+    model: "models/gemini-2.5-flash",
   });
 
   const prompt = `
@@ -195,12 +196,13 @@ app.post("/upload-cv", upload.single("cv"), async (req, res) => {
 
     return res.json({
       success: true,
-      extracted: parsed.data
+      extracted: parsed.data,
     });
-
   } catch (err) {
     await fs.unlink(filePath).catch(() => {});
-    return res.status(500).json({ error: "Server error", details: err.message });
+    return res
+      .status(500)
+      .json({ error: "Server error", details: err.message });
   }
 });
 
@@ -327,20 +329,25 @@ app.post("/deploy-portfolio", async (req, res) => {
     const buildDir = path.join(ROOT, "build");
     try {
       // Check if build directory exists locally, otherwise fetch from frontend
-      const buildExists = await fs.access(buildDir).then(() => true).catch(() => false);
-      
+      const buildExists = await fs
+        .access(buildDir)
+        .then(() => true)
+        .catch(() => false);
+
       if (buildExists) {
         // Copy from local build directory (excluding index.html as we'll create a custom one)
         await fsExtra.copy(buildDir, targetDir, {
           filter: (src) => {
-            return !src.endsWith('index.html');
-          }
+            return !src.endsWith("index.html");
+          },
         });
       } else {
         // Fetch asset-manifest.json to get all required files
         let assetManifest = null;
         try {
-          const manifestRes = await fetch(`${FRONTEND_URL}/asset-manifest.json`);
+          const manifestRes = await fetch(
+            `${FRONTEND_URL}/asset-manifest.json`
+          );
           if (manifestRes.ok) {
             assetManifest = await manifestRes.json();
           }
@@ -350,35 +357,41 @@ app.post("/deploy-portfolio", async (req, res) => {
 
         // List of files to copy (from asset-manifest or default list)
         const filesToCopy = [];
-        
+
         if (assetManifest && assetManifest.files) {
           // Get all files from asset-manifest (excluding index.html)
-          Object.values(assetManifest.files).forEach(filePath => {
-            if (filePath !== '/index.html') {
+          Object.values(assetManifest.files).forEach((filePath) => {
+            if (filePath !== "/index.html") {
               filesToCopy.push(filePath);
             }
           });
         } else {
           // Fallback to known files
           filesToCopy.push(
-            '/static/js/main.41da464c.js',
-            '/static/css/main.fd394aeb.css',
-            '/static/js/453.ececc0a5.chunk.js',
-            '/static/js/main.41da464c.js.map',
-            '/static/css/main.fd394aeb.css.map',
-            '/static/js/453.ececc0a5.chunk.js.map',
-            '/manifest.json',
-            '/favicon.ico',
-            '/logo192.png',
-            '/logo512.png',
-            '/robots.txt',
-            '/asset-manifest.json'
+            "/static/js/main.41da464c.js",
+            "/static/css/main.fd394aeb.css",
+            "/static/js/453.ececc0a5.chunk.js",
+            "/static/js/main.41da464c.js.map",
+            "/static/css/main.fd394aeb.css.map",
+            "/static/js/453.ececc0a5.chunk.js.map",
+            "/manifest.json",
+            "/favicon.ico",
+            "/logo192.png",
+            "/logo512.png",
+            "/robots.txt",
+            "/asset-manifest.json"
           );
         }
 
         // Also add common static files that might not be in manifest
-        const commonFiles = ['/manifest.json', '/favicon.ico', '/logo192.png', '/logo512.png', '/robots.txt'];
-        commonFiles.forEach(file => {
+        const commonFiles = [
+          "/manifest.json",
+          "/favicon.ico",
+          "/logo192.png",
+          "/logo512.png",
+          "/robots.txt",
+        ];
+        commonFiles.forEach((file) => {
           if (!filesToCopy.includes(file)) {
             filesToCopy.push(file);
           }
@@ -390,7 +403,10 @@ app.post("/deploy-portfolio", async (req, res) => {
             const fileUrl = `${FRONTEND_URL}${filePath}`;
             const fileRes = await fetch(fileUrl);
             if (fileRes.ok) {
-              const targetPath = path.join(targetDir, filePath.startsWith('/') ? filePath.slice(1) : filePath);
+              const targetPath = path.join(
+                targetDir,
+                filePath.startsWith("/") ? filePath.slice(1) : filePath
+              );
               const dir = path.dirname(targetPath);
               await fsExtra.ensureDir(dir);
               const buffer = await fileRes.arrayBuffer();
@@ -441,53 +457,52 @@ app.get("/p/:id", (req, res) => {
   const portfolioId = req.params.id;
   const dir = path.join(PORTFOLIOS_DIR, `portfolio_${portfolioId}`);
   const indexFile = path.join(dir, "index.html");
-  
-  res.sendFile(indexFile, err => {
+
+  res.sendFile(indexFile, (err) => {
     if (err) res.status(404).send("Portfolio not found");
   });
 });
 
 // Serve all other files (static assets) for portfolio routes
-app.get("/p/:id/*", async (req, res) => {
-  const portfolioId = req.params.id;
-  const dir = path.join(PORTFOLIOS_DIR, `portfolio_${portfolioId}`);
-  
-  // Extract the file path after /p/:id
-  // req.path will be like "/p/abc123/static/js/main.js"
-  // We need to remove "/p/abc123" to get "/static/js/main.js"
-  const fullRequestPath = req.path;
-  const filePath = fullRequestPath.replace(`/p/${portfolioId}`, "") || "/";
-  const fullPath = path.join(dir, filePath.startsWith("/") ? filePath.slice(1) : filePath);
-  
-  // Check if file exists locally first
-  try {
-    await fs.access(fullPath);
-    // File exists, serve it
-    return res.sendFile(fullPath, err => {
-      if (err) {
-        console.error(`Error serving file ${fullPath}:`, err.message);
-        res.status(404).send("File not found");
-      }
-    });
-  } catch {
-    // File doesn't exist locally, try to fetch from frontend as fallback
-    const assetUrl = `${FRONTEND_URL}${filePath}`;
-    try {
-      const assetRes = await fetch(assetUrl);
-      if (!assetRes.ok) {
-        console.warn(`Asset not found at ${assetUrl} (${assetRes.status})`);
-        return res.status(404).send("Asset not found");
-      }
-      const contentType = assetRes.headers.get("content-type") || "application/octet-stream";
-      res.set("Content-Type", contentType);
-      return assetRes.body.pipe(res);
-    } catch (err) {
-      console.error(`Error fetching asset from ${assetUrl}:`, err.message);
-      return res.status(404).send("Asset not found");
-    }
-  }
-});
+// app.get("/p/:id/*", async (req, res) => {
+//   const portfolioId = req.params.id;
+//   const dir = path.join(PORTFOLIOS_DIR, `portfolio_${portfolioId}`);
 
+//   // Extract the file path after /p/:id
+//   // req.path will be like "/p/abc123/static/js/main.js"
+//   // We need to remove "/p/abc123" to get "/static/js/main.js"
+//   const fullRequestPath = req.path;
+//   const filePath = fullRequestPath.replace(`/p/${portfolioId}`, "") || "/";
+//   const fullPath = path.join(dir, filePath.startsWith("/") ? filePath.slice(1) : filePath);
+
+//   // Check if file exists locally first
+//   try {
+//     await fs.access(fullPath);
+//     // File exists, serve it
+//     return res.sendFile(fullPath, err => {
+//       if (err) {
+//         console.error(`Error serving file ${fullPath}:`, err.message);
+//         res.status(404).send("File not found");
+//       }
+//     });
+//   } catch {
+//     // File doesn't exist locally, try to fetch from frontend as fallback
+//     const assetUrl = `${FRONTEND_URL}${filePath}`;
+//     try {
+//       const assetRes = await fetch(assetUrl);
+//       if (!assetRes.ok) {
+//         console.warn(`Asset not found at ${assetUrl} (${assetRes.status})`);
+//         return res.status(404).send("Asset not found");
+//       }
+//       const contentType = assetRes.headers.get("content-type") || "application/octet-stream";
+//       res.set("Content-Type", contentType);
+//       return assetRes.body.pipe(res);
+//     } catch (err) {
+//       console.error(`Error fetching asset from ${assetUrl}:`, err.message);
+//       return res.status(404).send("Asset not found");
+//     }
+//   }
+// });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
