@@ -69,7 +69,34 @@ async function parseCVWithGemini(cvText) {
   });
 
   const prompt = `
-You are a CV parsing engine.
+    You are highly accurate CV parsing assistant.
+    You must extract structured data from the CV and respond ONLY in valid JSON.
+
+    Extract PROFESSIONAL SUMMARY, EXPERIENCE, EDUCATION, CONTACT, CERTIFICATIONS, POSITION, NAME, PROJECTS , AWRDS , TOTAL YEARS OF EXPERIENCE, LINKS and return skills in EXACTLY THIS FORMAT:
+    
+    "skills": {
+        "Backend": [],
+        "Architecture": [],
+        "Databases": [],
+        "Cloud / DevOps": [],
+        "Frontend": [],
+        "AI / Tools": [],
+        "Authentication": []
+    }
+
+    profile_image: If a profile image URL is provided in the CV, use that.
+    If not provided, automatically generate a realistic human-looking avatar (not robotic or emoji style), based on the detected gender from the candidate’s name..
+
+    Rules:
+    - use comma-separated values.
+    - End each skills line with a full stop.
+    - Do not invent skills; only extract from CV.
+    - Do Not add new categories.
+    - If not found, return empty string.
+    - Must return valid json only.
+
+    professional_summary: If professional summary is not  found or more than 3 line then, generate a concise summary based on the CV content.
+    experience_years: Calculate total years of professional experience from the experience section.
 
 STRICT RULES:
 - Respond with VALID JSON ONLY
@@ -104,7 +131,13 @@ JSON STRUCTURE:
     "Languages": []
   },
   "experience": [],
-  "projects": [],
+  "projects": [ 
+    {
+      "title": "",
+      "tech": "",
+      "description": ""
+    }
+  ],
   "awards": [],
   "education": [],
   "certifications": [],
