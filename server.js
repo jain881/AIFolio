@@ -209,7 +209,7 @@ JSON STRUCTURE:
       "description": []
     }
   ],
-  "awards": [],
+  "awards": [{"title": "", "issuer": "", "date": ""}],
   "education": [],
   "certifications": [],
   "contact": {
