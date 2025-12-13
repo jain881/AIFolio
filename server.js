@@ -354,30 +354,34 @@ app.post("/deploy-portfolio", async (req, res) => {
 /* --------------------------------------------------
    SERVE DEPLOYED PORTFOLIOS
 --------------------------------------------------- */
-app.use("/p/:id", (req, res, next) => {
+app.use("/p/:id", async (req, res) => {
   const dir = path.join(PORTFOLIOS_DIR, `portfolio_${req.params.id}`);
   const indexFile = path.join(dir, "index.html");
 
-  // Proxy static assets from frontend URL
-  if (req.path.match(/\.(js|css|png|jpg|jpeg|gif|svg|ico|woff|woff2)$/)) {
+  const isAsset =
+    req.path.match(/\.(js|css|png|jpg|jpeg|gif|svg|ico|woff|woff2|json)$/) ||
+    req.path === "/manifest.json" ||
+    req.path === "/favicon.ico";
+
+  if (isAsset) {
     const assetUrl = `${FRONTEND_URL}${req.path}`;
-    fetch(assetUrl)
-      .then(assetRes => {
-        if (assetRes.ok) {
-          res.set('Content-Type', assetRes.headers.get('content-type'));
-          assetRes.body.pipe(res);
-        } else {
-          res.status(404).send('Asset not found');
-        }
-      })
-      .catch(() => res.status(404).send('Asset not found'));
+
+    try {
+      const assetRes = await fetch(assetUrl);
+      if (!assetRes.ok) return res.status(404).send("Asset not found");
+
+      res.set("Content-Type", assetRes.headers.get("content-type"));
+      assetRes.body.pipe(res);
+    } catch {
+      res.status(404).send("Asset not found");
+    }
   } else {
-    // Serve index.html for all other routes
-    res.sendFile(indexFile, (err) => {
-      if (err) res.status(404).send('Portfolio not found');
+    res.sendFile(indexFile, err => {
+      if (err) res.status(404).send("Portfolio not found");
     });
   }
 });
+
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
