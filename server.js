@@ -18,8 +18,7 @@ app.use(cors());
 app.use(express.json({ limit: "5mb" }));
 
 const ROOT = process.cwd();
-const FRONTEND_URL =
-  process.env.FRONTEND_URL || "https://aifolio-frontend.onrender.com";
+const BUILD_DIR = path.join(ROOT, "build"); // or dist
 const PORTFOLIOS_DIR = path.join(ROOT, "portfolios");
 /* ------------------- PDF TEXT EXTRACTION ------------------- */
 
@@ -322,113 +321,13 @@ app.post("/deploy-portfolio", async (req, res) => {
     const id = crypto.randomBytes(6).toString("hex");
     const targetDir = path.join(PORTFOLIOS_DIR, `portfolio_${id}`);
 
-    // 2️⃣ Create portfolio directory
-    await fsExtra.ensureDir(targetDir);
+    // 2️⃣ Copy React build
+    await fsExtra.copy(BUILD_DIR, targetDir);
 
-    // 3️⃣ Copy all static files from build directory
-    const buildDir = path.join(ROOT, "build");
-    try {
-      // Check if build directory exists locally, otherwise fetch from frontend
-      const buildExists = await fs
-        .access(buildDir)
-        .then(() => true)
-        .catch(() => false);
+    // 3️⃣ Inject data into index.html
+    const indexPath = path.join(targetDir, "index.html");
+    let html = await fs.readFile(indexPath, "utf8");
 
-      if (buildExists) {
-        // Copy from local build directory (excluding index.html as we'll create a custom one)
-        await fsExtra.copy(buildDir, targetDir, {
-          filter: (src) => {
-            return !src.endsWith("index.html");
-          },
-        });
-      } else {
-        // Fetch asset-manifest.json to get all required files
-        let assetManifest = null;
-        try {
-          const manifestRes = await fetch(
-            `${FRONTEND_URL}/asset-manifest.json`
-          );
-          if (manifestRes.ok) {
-            assetManifest = await manifestRes.json();
-          }
-        } catch (err) {
-          console.warn("Failed to fetch asset-manifest.json:", err.message);
-        }
-
-        // List of files to copy (from asset-manifest or default list)
-        const filesToCopy = [];
-
-        if (assetManifest && assetManifest.files) {
-          // Get all files from asset-manifest (excluding index.html)
-          Object.values(assetManifest.files).forEach((filePath) => {
-            if (filePath !== "/index.html") {
-              filesToCopy.push(filePath);
-            }
-          });
-        } else {
-          // Fallback to known files
-          filesToCopy.push(
-            "/static/js/main.41da464c.js",
-            "/static/css/main.fd394aeb.css",
-            "/static/js/453.ececc0a5.chunk.js",
-            "/static/js/main.41da464c.js.map",
-            "/static/css/main.fd394aeb.css.map",
-            "/static/js/453.ececc0a5.chunk.js.map",
-            "/manifest.json",
-            "/favicon.ico",
-            "/logo192.png",
-            "/logo512.png",
-            "/robots.txt",
-            "/asset-manifest.json"
-          );
-        }
-
-        // Also add common static files that might not be in manifest
-        const commonFiles = [
-          "/manifest.json",
-          "/favicon.ico",
-          "/logo192.png",
-          "/logo512.png",
-          "/robots.txt",
-        ];
-        commonFiles.forEach((file) => {
-          if (!filesToCopy.includes(file)) {
-            filesToCopy.push(file);
-          }
-        });
-
-        // Fetch and copy all files
-        for (const filePath of filesToCopy) {
-          try {
-            const fileUrl = `${FRONTEND_URL}${filePath}`;
-            const fileRes = await fetch(fileUrl);
-            if (fileRes.ok) {
-              const targetPath = path.join(
-                targetDir,
-                filePath.startsWith("/") ? filePath.slice(1) : filePath
-              );
-              const dir = path.dirname(targetPath);
-              await fsExtra.ensureDir(dir);
-              const buffer = await fileRes.arrayBuffer();
-              await fs.writeFile(targetPath, Buffer.from(buffer));
-            }
-          } catch (err) {
-            console.warn(`Failed to fetch ${filePath}:`, err.message);
-          }
-        }
-      }
-    } catch (err) {
-      console.warn("Error copying static files:", err.message);
-    }
-
-    // 4️⃣ Fetch index.html from frontend URL
-    const response = await fetch(`${FRONTEND_URL}/index.html`);
-    if (!response.ok) {
-      throw new Error(`Failed to fetch index.html: ${response.status}`);
-    }
-    let html = await response.text();
-
-    // 5️⃣ Inject data into index.html
     const injectedScript = `
       <script>
         window.__PORTFOLIO_DATA__ = ${JSON.stringify(data)};
@@ -437,72 +336,31 @@ app.post("/deploy-portfolio", async (req, res) => {
     `;
 
     html = html.replace("</head>", `${injectedScript}</head>`);
-    await fs.writeFile(path.join(targetDir, "index.html"), html);
+    await fs.writeFile(indexPath, html);
 
-    // 6️⃣ Public URL
+    // 4️⃣ Public URL
     const publicUrl = `${req.protocol}://${req.get("host")}/p/${id}`;
 
     res.json({ success: true, deployUrl: publicUrl });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: "Deployment failed", details: err.message });
+    res.status(500).json({ error: err });
   }
 });
 
 /* --------------------------------------------------
    SERVE DEPLOYED PORTFOLIOS
 --------------------------------------------------- */
-// Serve index.html for portfolio root
-app.get("/p/:id", (req, res) => {
-  const portfolioId = req.params.id;
-  const dir = path.join(PORTFOLIOS_DIR, `portfolio_${portfolioId}`);
+app.use("/p/:id", (req, res, next) => {
+  const dir = path.join(PORTFOLIOS_DIR, `portfolio_${req.params.id}`);
   const indexFile = path.join(dir, "index.html");
 
-  res.sendFile(indexFile, (err) => {
-    if (err) res.status(404).send("Portfolio not found");
+  // Try serving static assets first
+  express.static(dir)(req, res, () => {
+    // Fallback to index.html (VERY IMPORTANT)
+    res.sendFile(indexFile);
   });
 });
-
-// Serve all other files (static assets) for portfolio routes
-// app.get("/p/:id/*", async (req, res) => {
-//   const portfolioId = req.params.id;
-//   const dir = path.join(PORTFOLIOS_DIR, `portfolio_${portfolioId}`);
-
-//   // Extract the file path after /p/:id
-//   // req.path will be like "/p/abc123/static/js/main.js"
-//   // We need to remove "/p/abc123" to get "/static/js/main.js"
-//   const fullRequestPath = req.path;
-//   const filePath = fullRequestPath.replace(`/p/${portfolioId}`, "") || "/";
-//   const fullPath = path.join(dir, filePath.startsWith("/") ? filePath.slice(1) : filePath);
-
-//   // Check if file exists locally first
-//   try {
-//     await fs.access(fullPath);
-//     // File exists, serve it
-//     return res.sendFile(fullPath, err => {
-//       if (err) {
-//         console.error(`Error serving file ${fullPath}:`, err.message);
-//         res.status(404).send("File not found");
-//       }
-//     });
-//   } catch {
-//     // File doesn't exist locally, try to fetch from frontend as fallback
-//     const assetUrl = `${FRONTEND_URL}${filePath}`;
-//     try {
-//       const assetRes = await fetch(assetUrl);
-//       if (!assetRes.ok) {
-//         console.warn(`Asset not found at ${assetUrl} (${assetRes.status})`);
-//         return res.status(404).send("Asset not found");
-//       }
-//       const contentType = assetRes.headers.get("content-type") || "application/octet-stream";
-//       res.set("Content-Type", contentType);
-//       return assetRes.body.pipe(res);
-//     } catch (err) {
-//       console.error(`Error fetching asset from ${assetUrl}:`, err.message);
-//       return res.status(404).send("Asset not found");
-//     }
-//   }
-// });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
