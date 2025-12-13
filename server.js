@@ -18,7 +18,7 @@ app.use(cors());
 app.use(express.json({ limit: "5mb" }));
 
 const ROOT = process.cwd();
-const BUILD_DIR = path.join(ROOT, "build"); // or dist
+const BUILD_DIR = path.join(ROOT, "react-build"); // or dist
 const PORTFOLIOS_DIR = path.join(ROOT, "portfolios");
 /* ------------------- PDF TEXT EXTRACTION ------------------- */
 
