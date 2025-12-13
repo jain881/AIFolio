@@ -4,9 +4,9 @@ import fs from 'fs/promises'
 import path from 'path';
 import mammoth from 'mammoth';
 import 'dotenv/config';
-import {OpenRouter} from '@openrouter/sdk';
 import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
 import cors from "cors";
+import { GoogleGenerativeAI } from '@google/generative-ai';
 
 
 async function extractPDF(filePath)
@@ -29,9 +29,7 @@ const app = express();
 const upload =  multer({dest:"uploads/"});
 app.use(cors())
 
-const openRouter = new OpenRouter({
-    apiKey : process.env.OPENROUTER_API_KEY
-});
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 
 async function extractTextFromFile(filePath,originalName) {
@@ -59,149 +57,79 @@ async function extractTextFromFile(filePath,originalName) {
 }
 
 
-async function parseCVTextWithOpenRouter(cvText) {
-    const systemPrompt = `You are highly accurate CV parsing assistant.
-    You must extract structured data from the CV and respond ONLY in valid JSON.
+async function parseCVTextWithGemini(cvText) {
+  const model = genAI.getGenerativeModel({
+  model: "models/gemini-2.5-flash"
+  });
 
-    Extract PROFESSIONAL SUMMARY, EXPERIENCE, EDUCATION, CONTACT, CERTIFICATIONS, POSITION, NAME, PROJECTS , AWRDS , TOTAL YEARS OF EXPERIENCE, LINKS and return skills in EXACTLY THIS FORMAT:
-    
-    "skills": {
-        "Backend": [],
-        "Architecture": [],
-        "Databases": [],
-        "Cloud / DevOps": [],
-        "Frontend": [],
-        "AI / Tools": [],
-        "Authentication": []
-    }
+  const prompt = `
+You are a highly accurate CV parsing assistant.
+You must extract structured data from the CV and respond ONLY in valid JSON.
 
-    profile_image: If a profile image URL is provided in the CV, use that.
-    If not provided, automatically generate a realistic human-looking avatar (not robotic or emoji style), based on the detected gender from the candidate’s name..
+Extract:
+- name
+- position
+- professional_summary
+- experience_years
+- linkedin
+- github
+- skills (grouped exactly as below)
+- experience
+- projects
+- awards
+- education
+- certifications
+- contact
+- keywords
 
-    Rules:
-    - use comma-separated values.
-    - End each skills line with a full stop.
-    - Do not invent skills; only extract from CV.
-    - Do Not add new categories.
-    - If not found, return empty string.
-    - Must return valid json only.
+Skills format MUST be exactly:
 
-    professional_summary: If professional summary is not  found or more than 3 line then, generate a concise summary based on the CV content.
-    experience_years: Calculate total years of professional experience from the experience section.
-
-    Rule to generate professional summary:
-    - Keep it under 50 words.
-    - Focus on key skills, achievements, and career highlights.
-    - Avoid generic statements; make it specific to the candidate's background.
-
-    linkedin and github:
-    - If LinkedIn or Github URLs are present in the CV, extract and include them in the contact section.
-    - If not present, leave the fields empty.
-
-    
-
-
-    Output JSON Structure:
-
-
-    {
-  "profile_image": "",
-  "name": "",
-  "position": "",
-  "professional_summary": "",
-  "experience_years": "",
-  "linkedin": "",
-  "github": "",
-  
-  "skills": {
-    "Backend": [],
-    "Architecture": [],
-    "Databases": [],
-    "Cloud / DevOps": [],
-    "Frontend": [],
-    "AI / Tools": [],
-    "Authentication": [],
-    "Testing": [],
-    "Version Control": [],
-    "Soft Skills": [],
-    "Project Management": [],
-    "Operating Systems": [],
-    "Build Tools": [],
-    "Languages": []
-  },
-  "experience": [
-    {
-      "company": "",
-      "role": "",
-      "start_date": "",
-      "end_date": "",
-      "description": ""
-    }
-  ],
-  "projects": [
-    {
-      "title": "",
-      "tech": "",
-      "description": ""
-    }
-  ],
-  "awards": [
-    {
-      "title": "",
-      "company": "",
-      "date": ""
-    }
-  ],
-
-  "education": [
-    {
-      "degree": "",
-      "institution": "",
-      "start_date": "",
-      "end_date": ""
-    }
-  ],
-  "certifications": [],
-  "contact": {
-    "email": "",
-    "phone": "",
-    "location": ""
-  },
-  "keywords": []
+"skills": {
+  "Backend": [],
+  "Architecture": [],
+  "Databases": [],
+  "Cloud / DevOps": [],
+  "Frontend": [],
+  "AI / Tools": [],
+  "Authentication": [],
+  "Testing": [],
+  "Version Control": [],
+  "Soft Skills": [],
+  "Project Management": [],
+  "Operating Systems": [],
+  "Build Tools": [],
+  "Languages": []
 }
+
+Rules:
+- Do NOT invent data
+- If not found, return empty string or empty array
+- JSON ONLY, no explanation
+- professional_summary max 50 words
 
 CV CONTENT:
 ${cvText}
 `;
 
-    const resp = await openRouter.chat.send({
-        model: "openai/gpt-4.1-mini",
-        messages: [
-            { role: "system", content: [{ type: "text", text: systemPrompt }] },
-            { role: "user", content: [{ type: "text", text: cvText }] }
-        ],
-        max_tokens: 2048,
-        stream: false
-    });
+  const result = await model.generateContent(prompt);
+  const raw = result.response.text();
 
-    let raw = resp.choices[0].message.content;  // FIXED
+  const firstBrace = raw.indexOf("{");
+  const lastBrace = raw.lastIndexOf("}");
 
-    // Extract JSON safely
-    const firstBrace = raw.indexOf("{");
-    const lastBrace = raw.lastIndexOf("}");
+  if (firstBrace === -1 || lastBrace === -1) {
+    return { success: false, error: "No JSON found", raw };
+  }
 
-    if (firstBrace === -1 || lastBrace === -1) {
-        return { success: false, error: "No JSON found", raw };
-    }
-
-    try {
-        const jsonText = raw.slice(firstBrace, lastBrace + 1);
-        const parsed = JSON.parse(jsonText);
-        return { success: true, parsed, raw };
-    } catch (err) {
-        return { success: false, error: "Invalid JSON", raw };
-    }
+  try {
+    const jsonText = raw.slice(firstBrace, lastBrace + 1);
+    const parsed = JSON.parse(jsonText);
+    return { success: true, parsed, raw };
+  } catch (err) {
+    return { success: false, error: "Invalid JSON", raw };
+  }
 }
+
 
     // ednpoint
     app.post("/upload-cv",upload.single("cv"),async(req,res) => {
@@ -220,7 +148,7 @@ ${cvText}
                 return res.status(400).json({ error: "Could not extract text from file or file is empty." });
             }
 
-            const parseResult = await parseCVTextWithOpenRouter(text);
+            const parseResult = await parseCVTextWithGemini(text);
 
             await fs.unlink(filepath).catch(() => {});
             const cvUploaded = {
