@@ -352,14 +352,17 @@ app.post("/deploy-portfolio", async (req, res) => {
 /* --------------------------------------------------
    SERVE DEPLOYED PORTFOLIOS
 --------------------------------------------------- */
-app.use("/p/:id", (req, res, next) => {
+app.use("/p/:id", (req, res) => {
   const dir = path.join(PORTFOLIOS_DIR, `portfolio_${req.params.id}`);
-  express.static(dir)(req, res, next);
-});
+  const filePath = path.join(dir, req.path);
 
-app.get("/p/:id/*", (req, res) => {
-  const dir = path.join(PORTFOLIOS_DIR, `portfolio_${req.params.id}`);
-  res.sendFile(path.join(dir, "index.html"));
+  // If file exists (JS, CSS, images), serve it
+  if (fsExtra.existsSync(filePath)) {
+    return res.sendFile(filePath);
+  }
+
+  // Otherwise fallback to index.html (SPA)
+  return res.sendFile(path.join(dir, "index.html"));
 });
 
 
