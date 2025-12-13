@@ -20,8 +20,74 @@ app.use(express.json({ limit: "5mb" }));
 const ROOT = process.cwd();
 const BUILD_DIR = path.join(ROOT, "react-build"); // or dist
 const PORTFOLIOS_DIR = path.join(ROOT, "portfolios");
+const EMAIL_MAPPING_FILE = path.join(ROOT, "email-portfolio-mapping.json");
+const VIEW_TRACKING_FILE = path.join(ROOT, "view-tracking.json");
+
+async function getViewTracking() {
+  try {
+    const data = await fs.readFile(VIEW_TRACKING_FILE, "utf8");
+    return JSON.parse(data);
+  } catch (err) {
+    return {};
+  }
+}
+
+async function saveViewsTracking(tracking) {
+  await fs.writeFile(
+    VIEW_TRACKING_FILE,
+    JSON.stringify(tracking, null, 2),
+    "utf8"
+  );
+}
+
+async function incrementViewCount(portfolioId, req) {
+  const tracking = await getViewTracking();
+  if (!tracking[portfolioId]) {
+    tracking[portfolioId] = {
+      totalViews: 0,
+      uniqueViews: 0,
+      lastViewed: null,
+      ipAddresses: [],
+      viewHistory: [],
+    };
+  }
+  // ipAddress = req.ip;
+  tracking[portfolioId].totalViews++;
+  tracking[portfolioId].uniqueViews++;
+  tracking[portfolioId].lastViewed = new Date().toISOString();
+  // tracking[portfolioId].ipAddresses.push(ipAddress);
+  tracking[portfolioId].viewHistory.push({
+    timestamp: new Date().toISOString(),
+    ip: req.headers["x-forwarded-for"] || "unknown",
+  });
+  await saveViewTracking(tracking);
+  return tracking[portfolioId];
+}
+async function saveViewTracking(tracking) {
+  await fs.writeFile(
+    VIEW_TRACKING_FILE,
+    JSON.stringify(tracking, null, 2),
+    "utf8"
+  );
+}
 /* ------------------- PDF TEXT EXTRACTION ------------------- */
 
+const getEmailMapping = async () => {
+  try {
+    const data = await fs.readFile(EMAIL_MAPPING_FILE, "utf8");
+    return JSON.parse(data);
+  } catch (err) {
+    return {};
+  }
+};
+
+async function saveEmailMapping(mapping) {
+  await fs.writeFile(
+    EMAIL_MAPPING_FILE,
+    JSON.stringify(mapping, null, 2),
+    "utf8"
+  );
+}
 async function extractPDF(filePath) {
   const pdf = await getDocument(filePath).promise;
   let fullText = "";
@@ -222,89 +288,6 @@ app.get("/", (_, res) => {
 /* -------------------------------------------------
    UTIL: Generate Portfolio HTML
 -------------------------------------------------- */
-function generatePortfolioHTML(data, theme = "dark") {
-  console.log("Generating HTML with theme:", data);
-  const skills = Object.values(data.skills || {})
-    .flat()
-    .map((s) => `<li>${s}</li>`)
-    .join("");
-
-  const experience = (data.experience || [])
-    .map(
-      (job) => `
-      <div class="card">
-        <h3>${job.role || ""} @ ${job.company || ""}</h3>
-        <p>${job.start_date || ""} - ${job.end_date || "Present"}</p>
-        <ul>
-          ${(job.description || []).map((d) => `<li>${d}</li>`).join("")}
-        </ul>
-      </div>
-    `
-    )
-    .join("");
-
-  const projects = (data.projects || [])
-    .map(
-      (p) => `
-      <div class="card">
-        <h3>${p.title}</h3>
-        <p><b>${p.tech || ""}</b></p>
-        <p>${p.description || ""}</p>
-      </div>
-    `
-    )
-    .join("");
-
-  return `
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>${data.name || "Portfolio"}</title>
-
-<style>
-body {
-  font-family: Arial, sans-serif;
-  background: #0f172a;
-  color: #e5e7eb;
-  padding: 40px;
-}
-h1 { font-size: 36px; }
-h2 { margin-top: 40px; }
-.card {
-  background: #020617;
-  padding: 20px;
-  border-radius: 12px;
-  margin-bottom: 16px;
-}
-ul { padding-left: 20px; }
-a { color: #38bdf8; }
-</style>
-</head>
-
-<body>
-  <h1>${data.name || ""}</h1>
-  <h3>${data.position || ""}</h3>
-  <p>${data.professional_summary || ""}</p>
-
-  <h2>Skills</h2>
-  <ul>${skills}</ul>
-
-  <h2>Experience</h2>
-  ${experience}
-
-  <h2>Projects</h2>
-  ${projects}
-
-  <h2>Contact</h2>
-  <p>Email: ${data.contact?.email || ""}</p>
-  <p>Phone: ${data.contact?.phone || ""}</p>
-  <p>Location: ${data.contact?.location || ""}</p>
-</body>
-</html>
-`;
-}
 
 /* -------------------------------------------------
    DEPLOY PORTFOLIO API
@@ -317,6 +300,34 @@ app.post("/deploy-portfolio", async (req, res) => {
       return res.status(400).json({ error: "Invalid portfolio data" });
     }
 
+    const userEmail = data.extracted.contact.email.toLowerCase().trim();
+
+    if (!userEmail) {
+      return res
+        .status(400)
+        .json({ error: "Email is required to create a portfolio" });
+    }
+
+    const emailMapping = await getEmailMapping();
+
+    if (emailMapping[userEmail]) {
+      const existingId = emailMapping[userEmail];
+      const existingDir = path.join(PORTFOLIOS_DIR, `portfolio_${existingId}`);
+      try {
+        await fs.access(existingDir);
+        const existingUrl = `${req.protocol}://${req.get(
+          "host"
+        )}/p/${existingId}`;
+        return res.json({
+          success: true,
+          deployUrl: existingUrl,
+          message: "Portfolio already exists for this email",
+          isExisting: true,
+        });
+      } catch {
+        delete emailMapping[userEmail];
+      }
+    }
     // 1️⃣ Generate ID
     const id = crypto.randomBytes(6).toString("hex");
     const targetDir = path.join(PORTFOLIOS_DIR, `portfolio_${id}`);
@@ -338,10 +349,12 @@ app.post("/deploy-portfolio", async (req, res) => {
     html = html.replace("</head>", `${injectedScript}</head>`);
     await fs.writeFile(indexPath, html);
 
+    emailMapping[userEmail] = id;
+    await saveEmailMapping(emailMapping);
     // 4️⃣ Public URL
     const publicUrl = `${req.protocol}://${req.get("host")}/p/${id}`;
 
-    res.json({ success: true, deployUrl: publicUrl });
+    res.json({ success: true, deployUrl: publicUrl, isExisting: false });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err });
@@ -351,9 +364,22 @@ app.post("/deploy-portfolio", async (req, res) => {
 /* --------------------------------------------------
    SERVE DEPLOYED PORTFOLIOS
 --------------------------------------------------- */
-app.use("/p/:id", (req, res, next) => {
+app.use("/p/:id", async (req, res, next) => {
+  const portfolioId = req.params.id;
   const dir = path.join(PORTFOLIOS_DIR, `portfolio_${req.params.id}`);
   const indexFile = path.join(dir, "index.html");
+
+  if (
+    req.path === `/p/${portfolioId}` ||
+    req.path === `/p/${portfolioId}/` ||
+    !req.path.includes(".")
+  ) {
+    try {
+      await incrementViewCount(portfolioId, req);
+    } catch (err) {
+      console.error(err);
+    }
+  }
 
   // Try serving static assets first
   express.static(dir)(req, res, () => {
