@@ -343,7 +343,7 @@ app.post("/deploy-portfolio", async (req, res) => {
     res.json({ success: true, deployUrl: publicUrl });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: "Deployment failed" });
+    res.status(500).json({ error: err });
   }
 });
 
