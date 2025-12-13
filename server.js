@@ -1,5 +1,3 @@
-import express from "express";
-import multer from "multer";
 import fs from "fs/promises";
 import path from "path";
 import mammoth from "mammoth";
@@ -7,16 +5,22 @@ import cors from "cors";
 import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import "dotenv/config";
+import crypto from "crypto";
+import fsExtra from "fs-extra";
+import express from "express";
+import multer from "multer";
+
 
 /* ------------------- BASIC SETUP ------------------- */
 
 const app = express();
 const upload = multer({ dest: "uploads/" });
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: "5mb" }));
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-
+const ROOT = process.cwd();
+const BUILD_DIR = path.join(ROOT, "../my_portfolio/build"); // or dist
+const PORTFOLIOS_DIR = path.join(ROOT, "portfolios");
 /* ------------------- PDF TEXT EXTRACTION ------------------- */
 
 async function extractPDF(filePath) {
@@ -62,6 +66,7 @@ function extractJSON(raw) {
 }
 
 /* ------------------- GEMINI CV PARSER ------------------- */
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 async function parseCVWithGemini(cvText) {
   const model = genAI.getGenerativeModel({
@@ -135,7 +140,7 @@ JSON STRUCTURE:
     {
       "title": "",
       "tech": "",
-      "description": ""
+      "description": []
     }
   ],
   "awards": [],
@@ -212,6 +217,149 @@ app.get("/", (_, res) => {
 });
 
 /* ------------------- SERVER ------------------- */
+
+/* -------------------------------------------------
+   UTIL: Generate Portfolio HTML
+-------------------------------------------------- */
+function generatePortfolioHTML(data, theme = "dark") {
+  console.log("Generating HTML with theme:", data);
+  const skills = Object.values(data.skills || {})
+    .flat()
+    .map((s) => `<li>${s}</li>`)
+    .join("");
+
+  const experience = (data.experience || [])
+    .map(
+      (job) => `
+      <div class="card">
+        <h3>${job.role || ""} @ ${job.company || ""}</h3>
+        <p>${job.start_date || ""} - ${job.end_date || "Present"}</p>
+        <ul>
+          ${(job.description || []).map((d) => `<li>${d}</li>`).join("")}
+        </ul>
+      </div>
+    `
+    )
+    .join("");
+
+  const projects = (data.projects || [])
+    .map(
+      (p) => `
+      <div class="card">
+        <h3>${p.title}</h3>
+        <p><b>${p.tech || ""}</b></p>
+        <p>${p.description || ""}</p>
+      </div>
+    `
+    )
+    .join("");
+
+  return `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>${data.name || "Portfolio"}</title>
+
+<style>
+body {
+  font-family: Arial, sans-serif;
+  background: #0f172a;
+  color: #e5e7eb;
+  padding: 40px;
+}
+h1 { font-size: 36px; }
+h2 { margin-top: 40px; }
+.card {
+  background: #020617;
+  padding: 20px;
+  border-radius: 12px;
+  margin-bottom: 16px;
+}
+ul { padding-left: 20px; }
+a { color: #38bdf8; }
+</style>
+</head>
+
+<body>
+  <h1>${data.name || ""}</h1>
+  <h3>${data.position || ""}</h3>
+  <p>${data.professional_summary || ""}</p>
+
+  <h2>Skills</h2>
+  <ul>${skills}</ul>
+
+  <h2>Experience</h2>
+  ${experience}
+
+  <h2>Projects</h2>
+  ${projects}
+
+  <h2>Contact</h2>
+  <p>Email: ${data.contact?.email || ""}</p>
+  <p>Phone: ${data.contact?.phone || ""}</p>
+  <p>Location: ${data.contact?.location || ""}</p>
+</body>
+</html>
+`;
+}
+
+/* -------------------------------------------------
+   DEPLOY PORTFOLIO API
+-------------------------------------------------- */
+app.post("/deploy-portfolio", async (req, res) => {
+  try {
+    const { data, theme } = req.body;
+
+    if (!data?.extracted) {
+      return res.status(400).json({ error: "Invalid portfolio data" });
+    }
+
+    // 1️⃣ Generate ID
+    const id = crypto.randomBytes(6).toString("hex");
+    const targetDir = path.join(PORTFOLIOS_DIR, `portfolio_${id}`);
+
+    // 2️⃣ Copy React build
+    await fsExtra.copy(BUILD_DIR, targetDir);
+
+    // 3️⃣ Inject data into index.html
+    const indexPath = path.join(targetDir, "index.html");
+    let html = await fs.readFile(indexPath, "utf8");
+
+    const injectedScript = `
+      <script>
+        window.__PORTFOLIO_DATA__ = ${JSON.stringify(data)};
+        window.__PORTFOLIO_THEME__ = "${theme}";
+      </script>
+    `;
+
+    html = html.replace("</head>", `${injectedScript}</head>`);
+    await fs.writeFile(indexPath, html);
+
+    // 4️⃣ Public URL
+    const publicUrl = `${req.protocol}://${req.get("host")}/p/${id}`;
+
+    res.json({ success: true, deployUrl: publicUrl });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Deployment failed" });
+  }
+});
+
+/* --------------------------------------------------
+   SERVE DEPLOYED PORTFOLIOS
+--------------------------------------------------- */
+app.use("/p/:id", (req, res, next) => {
+  const dir = path.join(PORTFOLIOS_DIR, `portfolio_${req.params.id}`);
+  const indexFile = path.join(dir, "index.html");
+
+  // Try serving static assets first
+  express.static(dir)(req, res, () => {
+    // Fallback to index.html (VERY IMPORTANT)
+    res.sendFile(indexFile);
+  });
+});
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
